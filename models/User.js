@@ -1,4 +1,3 @@
-// models/User.js
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -7,9 +6,9 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   isVerified: { type: Boolean, default: false },
 
-  // For OTP
+  // OTP fields (must match controller)
   otp: { type: String },
-  otpExpiresAt: { type: Date }
+  otpExpire: { type: Date }
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);
