@@ -6,23 +6,44 @@ require("dotenv").config();
 
 const app = express();
 
-// ------------------ FIXED CORS ------------------
-const corsOptions = {
-  origin: "*", 
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
+/* ------------------ CORS CONFIG ------------------ */
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://fr-iota-ashy.vercel.app"
+];
 
-app.use(cors(corsOptions));
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // allow Postman
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS Not Allowed"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+// Preflight
+app.options("*", cors());
+
+/* ------------------ LOGGER (MUST BE ABOVE ROUTES) ------------------ */
+app.use((req, res, next) => {
+  console.log("➡ Incoming request:", req.method, req.url);
+  next();
+});
 
 app.use(express.json());
 
-// ------------------ MONGODB CONNECT ------------------
+/* ------------------ MONGODB CONNECT ------------------ */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✔"))
   .catch((err) => console.log("Mongo Error ❌", err));
 
-// ------------------ USER MODEL ------------------
+/* ------------------ USER MODEL ------------------ */
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
@@ -34,7 +55,7 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", UserSchema);
 
-// ------------------ EMAIL SETUP ------------------
+/* ------------------ EMAIL SETUP ------------------ */
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -43,10 +64,10 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// OTP generator
+/* OTP generator */
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// ---------------------------- SIGNUP ----------------------------
+/* ---------------------------- SIGNUP ---------------------------- */
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -77,6 +98,7 @@ app.post("/api/auth/signup", async (req, res) => {
     }
 
     await transporter.sendMail({
+      from: process.env.EMAIL_USER,
       to: email,
       subject: "Your Signup OTP",
       html: `<h2>Your OTP is: <b>${otp}</b></h2>`
@@ -90,7 +112,7 @@ app.post("/api/auth/signup", async (req, res) => {
   }
 });
 
-// ---------------------------- VERIFY OTP ----------------------------
+/* ---------------------------- VERIFY OTP ---------------------------- */
 app.post("/api/auth/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -114,7 +136,7 @@ app.post("/api/auth/verify-otp", async (req, res) => {
   }
 });
 
-// ---------------------------- LOGIN ----------------------------
+/* ---------------------------- LOGIN ---------------------------- */
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -144,7 +166,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ---------------------------- FORGOT PASSWORD ----------------------------
+/* ---------------------------- FORGOT PASSWORD ---------------------------- */
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
@@ -159,6 +181,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     await user.save();
 
     await transporter.sendMail({
+      from: process.env.EMAIL_USER,
       to: email,
       subject: "Password Reset OTP",
       html: `<h2>Your Password Reset OTP: <b>${otp}</b></h2>`
@@ -172,7 +195,7 @@ app.post("/api/auth/forgot-password", async (req, res) => {
   }
 });
 
-// ---------------------------- RESET PASSWORD ----------------------------
+/* ---------------------------- RESET PASSWORD ---------------------------- */
 app.post("/api/auth/reset-password", async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
@@ -200,22 +223,16 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
 });
 
-// ---------------------------- LOGOUT ----------------------------
+/* ---------------------------- LOGOUT ---------------------------- */
 app.post("/api/auth/logout", (req, res) => {
   return res.json({ message: "Logout successful" });
 });
 
-// ---------------------------- TEST ROUTE ----------------------------
+/* ---------------------------- TEST ROUTE ---------------------------- */
 app.get("/", (req, res) => {
   res.send("Auth Backend Running");
 });
 
-// Request Logger
-app.use((req, res, next) => {
-  console.log("➡ Incoming request:", req.method, req.url);
-  next();
-});
-
-// ---------------------------- SERVER ----------------------------
+/* ---------------------------- SERVER ---------------------------- */
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on port", port));
