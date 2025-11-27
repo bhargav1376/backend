@@ -1,19 +1,18 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 require("dotenv").config();
 
 const app = express();
 
-/* ------------------ CORS CONFIG (RENDER SAFE) ------------------ */
+/* ------------------ CORS CONFIG ------------------ */
 app.use((req, res, next) => {
   const allowedOrigins = [
     "http://localhost:3000",
-    "https://fr-iota-ashy.vercel.app"
+    "https://fr-iota-ashy.vercel.app", // your frontend
   ];
 
   const origin = req.headers.origin;
-
   if (allowedOrigins.includes(origin)) {
     res.header("Access-Control-Allow-Origin", origin);
   }
@@ -31,17 +30,17 @@ app.use((req, res, next) => {
 
 /* ------------------ LOGGER ------------------ */
 app.use((req, res, next) => {
-  console.log("➡ Request:", req.method, req.url);
+  console.log("➡ Incoming request:", req.method, req.url);
   next();
 });
 
 app.use(express.json());
 
-/* ------------------ MONGO CONNECT ------------------ */
+/* ------------------ MONGODB CONNECT ------------------ */
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Connected ✔"))
-  .catch((err) => console.log("MongoDB Error ❌", err));
+  .catch((err) => console.log("Mongo Error ❌", err));
 
 /* ------------------ USER MODEL ------------------ */
 const UserSchema = new mongoose.Schema({
@@ -50,33 +49,31 @@ const UserSchema = new mongoose.Schema({
   password: String,
   otp: String,
   otpExpire: Date,
-  isVerified: { type: Boolean, default: false }
+  isVerified: { type: Boolean, default: false },
 });
 
 const User = mongoose.model("User", UserSchema);
 
-/* ------------------ EMAIL TRANSPORT (RENDER WORKING VERSION) ------------------ */
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // REQUIRED ON RENDER
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS // Gmail App Password required
-  }
-});
+/* ------------------ RESEND EMAIL SETUP ------------------ */
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Debug SMTP connection
-transporter.verify((err, success) => {
-  if (err) {
-    console.error("❌ Email Server Error:", err);
-  } else {
-    console.log("📧 SMTP Server Ready");
+async function sendMail(to, subject, html) {
+  try {
+    await resend.emails.send({
+      from: "Family Tree <onboarding@resend.dev>",
+      to,
+      subject,
+      html,
+    });
+    console.log("📧 Email sent to", to);
+  } catch (error) {
+    console.error("❌ Email Server Error:", error);
   }
-});
+}
 
-/* ------------------ OTP GENERATOR ------------------ */
-const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
+/* OTP generator */
+const generateOtp = () =>
+  Math.floor(100000 + Math.random() * 900000).toString();
 
 /* ---------------------------- SIGNUP ---------------------------- */
 app.post("/api/auth/signup", async (req, res) => {
@@ -104,18 +101,17 @@ app.post("/api/auth/signup", async (req, res) => {
         password,
         otp,
         otpExpire: Date.now() + 10 * 60 * 1000,
-        isVerified: false
+        isVerified: false,
       });
     }
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Your Signup OTP",
-      html: `<h2>Your OTP is: <b>${otp}</b></h2>`
-    });
+    await sendMail(
+      email,
+      "Your Signup OTP",
+      `<h2>Your OTP is: <b>${otp}</b></h2>`
+    );
 
-    res.json({ message: "OTP sent to your email ✔" });
+    res.json({ message: "OTP sent to email" });
   } catch (err) {
     console.error("Signup Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -128,9 +124,12 @@ app.post("/api/auth/verify-otp", async (req, res) => {
     const { email, otp } = req.body;
 
     const user = await User.findOne({ email });
+
     if (!user) return res.status(400).json({ message: "User not found" });
-    if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
-    if (user.otpExpire < Date.now()) return res.status(400).json({ message: "OTP expired" });
+    if (user.otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP" });
+    if (user.otpExpire < Date.now())
+      return res.status(400).json({ message: "OTP expired" });
 
     user.isVerified = true;
     user.otp = null;
@@ -150,16 +149,19 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "User not found" });
-    if (!user.isVerified) return res.status(400).json({ message: "Please verify your email first" });
-    if (user.password !== password) return res.status(400).json({ message: "Incorrect password" });
+
+    if (!user)
+      return res.status(400).json({ message: "User not found" });
+
+    if (!user.isVerified)
+      return res.status(400).json({ message: "Please verify your email first" });
+
+    if (user.password !== password)
+      return res.status(400).json({ message: "Incorrect password" });
 
     res.json({
       message: "Login Successful",
-      user: {
-        name: user.name,
-        email: user.email
-      }
+      user: { name: user.name, email: user.email },
     });
   } catch (err) {
     console.error("Login Error:", err);
@@ -173,21 +175,21 @@ app.post("/api/auth/forgot-password", async (req, res) => {
     const { email } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "User not found" });
+    if (!user)
+      return res.status(400).json({ message: "User not found" });
 
     const otp = generateOtp();
     user.otp = otp;
     user.otpExpire = Date.now() + 10 * 60 * 1000;
     await user.save();
 
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: email,
-      subject: "Password Reset OTP",
-      html: `<h2>Your OTP is: <b>${otp}</b></h2>`
-    });
+    await sendMail(
+      email,
+      "Password Reset OTP",
+      `<h2>Your Password Reset OTP: <b>${otp}</b></h2>`
+    );
 
-    res.json({ message: "OTP sent to your email ✔" });
+    res.json({ message: "OTP sent to your email" });
   } catch (err) {
     console.error("Forgot Password Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -200,16 +202,21 @@ app.post("/api/auth/reset-password", async (req, res) => {
     const { email, otp, newPassword } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "User not found" });
-    if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
-    if (user.otpExpire < Date.now()) return res.status(400).json({ message: "OTP expired" });
+    if (!user)
+      return res.status(400).json({ message: "User not found" });
+
+    if (user.otp !== otp)
+      return res.status(400).json({ message: "Invalid OTP" });
+
+    if (user.otpExpire < Date.now())
+      return res.status(400).json({ message: "OTP expired" });
 
     user.password = newPassword;
     user.otp = null;
     user.otpExpire = null;
     await user.save();
 
-    res.json({ message: "Password reset successful ✔" });
+    res.json({ message: "Password reset successful" });
   } catch (err) {
     console.error("Reset Password Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -218,14 +225,14 @@ app.post("/api/auth/reset-password", async (req, res) => {
 
 /* ---------------------------- LOGOUT ---------------------------- */
 app.post("/api/auth/logout", (req, res) => {
-  res.json({ message: "Logout successful" });
+  return res.json({ message: "Logout successful" });
 });
 
-/* ---------------------------- ROOT TEST ROUTE ---------------------------- */
+/* ---------------------------- DEFAULT ROUTE ---------------------------- */
 app.get("/", (req, res) => {
-  res.send("Auth Backend Running");
+  res.send("Auth Backend Running ✔");
 });
 
 /* ---------------------------- SERVER ---------------------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+const port = process.env.PORT || 10000;
+app.listen(port, () => console.log("Server running on port", port));
