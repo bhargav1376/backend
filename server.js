@@ -5,7 +5,17 @@ const nodemailer = require("nodemailer");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+
+// ------------------ FIXED CORS ------------------
+const corsOptions = {
+  origin: "*", 
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions)); // IMPORTANT for preflight
+
 app.use(express.json());
 
 // ------------------ MONGODB CONNECT ------------------
@@ -17,7 +27,7 @@ mongoose.connect(process.env.MONGO_URI)
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
-  password: String,   // ⭐ plain password (no hashing)
+  password: String,
   otp: String,
   otpExpire: Date,
   isVerified: { type: Boolean, default: false }
@@ -29,8 +39,8 @@ const User = mongoose.model("User", UserSchema);
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: process.env.EMAIL_USER,   // your Gmail
-    pass: process.env.EMAIL_PASS    // Google App Password
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
   }
 });
 
@@ -44,7 +54,6 @@ app.post("/api/auth/signup", async (req, res) => {
 
     let user = await User.findOne({ email });
 
-    // If email exists and verified → block signup
     if (user && user.isVerified) {
       return res.status(400).json({ message: "Email already exists" });
     }
@@ -52,25 +61,22 @@ app.post("/api/auth/signup", async (req, res) => {
     const otp = generateOtp();
 
     if (user) {
-      // Update incomplete signup
       user.name = name;
-      user.password = password; // ⭐ Store plain password
+      user.password = password;
       user.otp = otp;
       user.otpExpire = Date.now() + 10 * 60 * 1000;
       await user.save();
     } else {
-      // Create new unverified user
       await User.create({
         name,
         email,
-        password,    
+        password,
         otp,
         otpExpire: Date.now() + 10 * 60 * 1000,
         isVerified: false
       });
     }
 
-    // Send OTP to email
     await transporter.sendMail({
       to: email,
       subject: "Your Signup OTP",
@@ -125,7 +131,6 @@ app.post("/api/auth/login", async (req, res) => {
     if (user.password !== password)
       return res.status(400).json({ message: "Incorrect password" });
 
-    // ⭐ Return user details
     res.json({
       message: "Login Successful",
       user: {
@@ -140,8 +145,6 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-
-
 // ---------------------------- FORGOT PASSWORD ----------------------------
 app.post("/api/auth/forgot-password", async (req, res) => {
   try {
@@ -153,10 +156,9 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
     const otp = generateOtp();
     user.otp = otp;
-    user.otpExpire = Date.now() + 10 * 60 * 1000; // 10 min
+    user.otpExpire = Date.now() + 10 * 60 * 1000;
     await user.save();
 
-    // Send OTP email
     await transporter.sendMail({
       to: email,
       subject: "Password Reset OTP",
@@ -186,11 +188,9 @@ app.post("/api/auth/reset-password", async (req, res) => {
     if (user.otpExpire < Date.now())
       return res.status(400).json({ message: "OTP expired" });
 
-    // Save new plain password (NO hash)
     user.password = newPassword;
     user.otp = null;
     user.otpExpire = null;
-
     await user.save();
 
     res.json({ message: "Password reset successful" });
@@ -201,19 +201,17 @@ app.post("/api/auth/reset-password", async (req, res) => {
   }
 });
 
-
+// ---------------------------- LOGOUT ----------------------------
 app.post("/api/auth/logout", (req, res) => {
   return res.json({ message: "Logout successful" });
 });
-
-
-
 
 // ---------------------------- TEST ROUTE ----------------------------
 app.get("/", (req, res) => {
   res.send("Auth Backend Running");
 });
 
+// Request Logger
 app.use((req, res, next) => {
   console.log("➡ Incoming request:", req.method, req.url);
   next();
